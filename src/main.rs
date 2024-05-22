@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value; // Import Value for generic JSON handling
+use serde_json::Value;
 use serde_json::json;
+use std::io::{self, Read};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Suggestion {
@@ -8,6 +9,7 @@ struct Suggestion {
     unrestricted_value: String,
     data: Datalist,
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Datalist {
     postal_code: Option<String>,
@@ -104,43 +106,59 @@ struct Datalist {
     qc: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct InputData {
+    sv_adres: String,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up your DaData API token
     let token = "14e57df192d307af2ace246446ecd5469fa3c3db";
 
-    // Construct the URL for the suggestion API endpoint
-    let url = format!("http://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address");
-
-    // Prepare the request body
-    let query = json!({
-        "query": "москва хабар", // Your query string
-        "count": 1 // Number of suggestions you want to receive
-    });
+    // Read JSON array from stdin
+    let mut buffer = String::new();
+    io::stdin().read_to_string(&mut buffer)?;
+    let input_data: Vec<InputData> = serde_json::from_str(&buffer)?;
 
     // Create a reqwest client
     let client = reqwest::blocking::Client::new();
 
-    // Make a POST request to the DaData API
-    let response = client
-        .post(&url)
-        .header("Authorization", format!("Token {}", token))
-        .header("Content-Type", "application/json")
-        .body(serde_json::to_string(&query)?)
-        .send()?;
+    // Vector to hold all suggestions
+    let mut all_suggestions = Vec::new();
 
-    // Parse the response JSON
-    let json_response: Value = response.json()?;
+    for data in input_data {
+        // Construct the URL for the suggestion API endpoint
+        let url = format!("http://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address");
 
-    // Extract suggestions array from JSON
-    if let Some(suggestions) = json_response.get("suggestions").and_then(|s| s.as_array()) {
-        // Parse suggestions into Suggestion struct
-        for suggestion in suggestions {
-            let suggestion: Suggestion = serde_json::from_value(suggestion.clone())?;
-            println!("{:?}", suggestion);
+        // Prepare the request body
+        let query_json = json!({
+            "query": data.sv_adres,
+            "count": 1 // Number of suggestions you want to receive
+        });
+
+        // Make a POST request to the DaData API
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Token {}", token))
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&query_json)?)
+            .send()?;
+
+        // Parse the response JSON
+        let json_response: Value = response.json()?;
+
+        // Extract suggestions array from JSON
+        if let Some(suggestions) = json_response.get("suggestions").and_then(|s| s.as_array()) {
+            // Parse suggestions into Suggestion struct
+            for suggestion in suggestions {
+                let suggestion: Suggestion = serde_json::from_value(suggestion.clone())?;
+                all_suggestions.push(suggestion);
+            }
         }
-    } else {
-        eprintln!("No suggestions found in the response.");
     }
+
+    // Output all suggestions in JSON format
+    println!("{}", serde_json::to_string_pretty(&all_suggestions)?);
 
     Ok(())
 }
